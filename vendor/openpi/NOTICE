@@ -1,0 +1,10 @@
+OpenPI source snapshot
+Based on Physical Intelligence OpenPI, https://github.com/Physical-Intelligence/openpi
+Licensed under Apache License 2.0, see LICENSE.
+
+This repository preserves the runtime source snapshot used on the deployed AGX.
+The original source archive SHA-256 is
+742591545f8e860e03335f7e72726da9ad9f64e618f39694dbfda617b1a0234a.
+The snapshot contains pre-existing inference compatibility modifications.
+Additional Jetson runtime changes are recorded in ../../inference.patch.
+See ../../THIRD_PARTY.md for provenance.

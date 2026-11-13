@@ -1,0 +1,126 @@
+--- a/openpi/models_pytorch/pi0_pytorch.py
++++ b/openpi/models_pytorch/pi0_pytorch.py
+@@ -157,7 +157,11 @@
+     def _prepare_attention_masks_4d(self, att_2d_masks):
+         """Helper method to prepare 4D attention masks for transformer."""
+         att_2d_masks_4d = att_2d_masks[:, None, :, :]
+-        return torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
++        bias = torch.where(att_2d_masks_4d, 0.0, -2.3819763e38)
++        if getattr(self, "attention_backend", "eager") == "sdpa":
++            # Jetson SDPA requires the additive bias and query to share dtype.
++            bias = bias.to(self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype)
++        return bias
+ 
+     def _preprocess_observation(self, observation, *, train=True):
+         """Helper method to preprocess observation."""
+@@ -195,12 +199,16 @@
+         att_masks = []
+ 
+         # Process images
+-        for img, img_mask in zip(images, img_masks, strict=True):
++        for image_index, (img, img_mask) in enumerate(zip(images, img_masks, strict=True)):
+ 
+             def image_embed_func(img):
+                 return self.paligemma_with_expert.embed_image(img)
+ 
+-            img_emb = self._apply_checkpoint(image_embed_func, img)
++            # UR5's third camera slot is permanently masked and its input is constant.
++            if image_index == 2 and hasattr(self, "cached_padding_image"):
++                img_emb = self.cached_padding_image.expand(img.shape[0], -1, -1)
++            else:
++                img_emb = self._apply_checkpoint(image_embed_func, img)
+ 
+             bsize, num_img_embs = img_emb.shape[:2]
+ 
+@@ -227,7 +235,7 @@
+ 
+         embs = torch.cat(embs, dim=1)
+         pad_masks = torch.cat(pad_masks, dim=1)
+-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
++        att_masks = torch.zeros(len(att_masks), dtype=torch.bool, device=pad_masks.device)
+ 
+         # Get batch size from the first dimension of the concatenated tensors
+         bsize = pad_masks.shape[0]
+@@ -309,7 +317,8 @@
+ 
+         embs = torch.cat(embs, dim=1)
+         pad_masks = torch.cat(pad_masks, dim=1)
+-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
++        att_masks = torch.zeros(len(att_masks), dtype=embs.dtype, device=embs.device)
++        att_masks[: 1 if self.pi05 else 2] = 1
+         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+ 
+         return embs, pad_masks, att_masks, adarms_cond
+@@ -389,7 +398,7 @@
+ 
+         # Compute image and language key value cache
+         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
++        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = getattr(self, "attention_backend", "eager")  # noqa: SLF001
+ 
+         _, past_key_values = self.paligemma_with_expert.forward(
+             attention_mask=prefix_att_2d_masks_4d,
+@@ -400,11 +409,11 @@
+         )
+ 
+         dt = -1.0 / num_steps
+-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
++        dt = torch.full((), dt, dtype=torch.float32, device=device)
+ 
+         x_t = noise
+-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+-        while time >= -dt / 2:
++        time = torch.ones((), dtype=torch.float32, device=device)
++        for _ in range(num_steps):
+             expanded_time = time.expand(bsize)
+             v_t = self.denoise_step(
+                 state,
+@@ -445,7 +454,7 @@
+ 
+         # Prepare attention masks
+         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+-        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
++        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = getattr(self, "attention_backend", "eager")  # noqa: SLF001
+ 
+         outputs_embeds, _ = self.paligemma_with_expert.forward(
+             attention_mask=full_att_2d_masks_4d,
+--- a/openpi/policies/policy.py
++++ b/openpi/policies/policy.py
+@@ -75,13 +75,13 @@
+             self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
+         else:
+             # Convert inputs to PyTorch tensors and move to correct device
+-            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
++            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device, non_blocking=True)[None, ...], inputs)
+             sample_rng_or_pytorch_device = self._pytorch_device
+ 
+         # Prepare kwargs for sample_actions
+         sample_kwargs = dict(self._sample_kwargs)
+         if noise is not None:
+-            noise = torch.from_numpy(noise).to(self._pytorch_device) if self._is_pytorch_model else jnp.asarray(noise)
++            noise = torch.from_numpy(noise).to(self._pytorch_device, non_blocking=True) if self._is_pytorch_model else jnp.asarray(noise)
+ 
+             if noise.ndim == 2:  # If noise is (action_horizon, action_dim), add batch dimension
+                 noise = noise[None, ...]  # Make it (1, action_horizon, action_dim)
+--- a/openpi/policies/libero_policy.py
++++ b/openpi/policies/libero_policy.py
+@@ -59,7 +59,7 @@
+                 "base_0_rgb": base_image,
+                 "left_wrist_0_rgb": wrist_image,
+                 # Pad any non-existent images with zero-arrays of the appropriate shape.
+-                "right_wrist_0_rgb": np.zeros_like(base_image),
++                "right_wrist_0_rgb": np.zeros((*_model.IMAGE_RESOLUTION, 3), dtype=base_image.dtype),
+             },
+             "image_mask": {
+                 "base_0_rgb": np.True_,
+--- a/openpi/shared/array_typing.py
++++ b/openpi/shared/array_typing.py
+@@ -32,6 +32,8 @@
+ 
+ 
+ def _check_dataclass_annotations(self, typechecker):
++    if config.jaxtyping_disable:
++        return None
+     if not any(
+         frame.frame.f_globals.get("__name__") in {"jax._src.tree_util", "flax.nnx.transforms.compilation"}
+         for frame in inspect.stack()

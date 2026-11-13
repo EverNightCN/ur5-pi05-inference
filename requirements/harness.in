@@ -1,0 +1,18 @@
+# API planner dependencies, isolated from the Jetson CUDA environment.
+pydantic-ai-slim[anthropic,openai,cli]==2.53.0
+pydantic-ai-harness==0.53.0
+anthropic<2
+jsonschema
+numpy==1.26.4
+scipy==1.15.3
+opencv-python-headless==4.11.0.86
+pillow==12.3.0
+pyserial==3.5
+python-dotenv
+PyYAML
+websockets==15.0.1
+msgpack==1.2.4
+dm-tree==0.1.10
+fastapi
+uvicorn
+imageio==2.38.0

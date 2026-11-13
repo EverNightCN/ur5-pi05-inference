@@ -1,0 +1,38 @@
+# Copy to ur5.local.toml and set the robot IP and device paths for this site.
+[robot]
+ip = "192.168.1.100"
+protocol_version = 2
+rtde_frequency_hz = 125.0
+
+[gripper]
+port = "/dev/ttyUSB0"
+baud = 115200
+slave_id = 1
+speed = 100
+force = 20
+
+[home]
+joints_deg = [-180.0, -90.0, -90.0, -90.0, 90.0, -90.0]
+
+[collect]
+task_en = "Put the red cylinder and the blue cube into the storage box. Leave all other objects outside the box."
+camera_indices = ["/dev/video0", "/dev/video2"]
+camera_width = 1280
+camera_height = 720
+camera_fps = 30.0
+
+[safety]
+workspace_min = [-0.8, -0.8, 0.0]
+workspace_max = [0.8, 0.8, 1.2]
+
+[inference]
+fps = 30.0
+action_fps = 30.0
+duration = 0.0
+infer_period = 0.4
+timeout = 3.0
+max_step_mm = 1.0
+max_rot_step_deg = 1.0
+camera_max_age = 0.25
+camera_max_skew = 0.1
+home_tolerance_deg = 1.0

@@ -1,0 +1,42 @@
+# 复现验证记录
+
+## 本次打包验证
+
+在现有 Jetson AGX Orin 的独立 checkout 中重新创建了 Python 环境。安装复用了原设备的公开软件安装包，并重新校验其 SHA-256；Python 依赖使用锁文件安装。验证使用当前仓库整理后的入口和路径。
+
+| 检查 | 结果 |
+|---|---|
+| Jetson CUDA 推理环境重建 | 通过，78 个已安装包依赖兼容 |
+| CUDA BF16 矩阵运算 | 通过 |
+| Triton / torch.compile GPU 编译 | 通过 |
+| 完整推理 runtime 导入 | 通过 |
+| Harness 环境重建 | 通过，63 个包依赖兼容 |
+| RPent 原生 API planner 与工具导入 | 通过 |
+| 模拟 RTDE、控制器、串口、旋转、HOME、URScript 测试 | 88 项通过 |
+| Harness 原生 agent loop、双图像工具、取消和错误传播等测试 | 8 项通过 |
+| checkpoint 审计和 LoRA 合并回归 | 10 项通过 |
+| systemd unit 实际解析检查 | `systemd-analyze --user verify` 通过 |
+| 入口 help | 通过，使用模拟启动器验证控制编排 |
+| Python 语法与 Bash 语法 | 通过 |
+| 发布文件敏感信息与二进制检查 | 发布前执行，检查 API 凭据、私钥和模型文件 |
+
+共 106 项测试通过。基础环境的测试发现包含 8 项 Harness 测试，因隔离依赖而跳过，这 8 项随后在 Harness 环境完整执行并通过。
+
+部署单元通过生成的临时 unit 做解析验证。当前验证没有启动新仓库的模型服务或连接机械臂。验证过程中原设备的外置模型盘已离线，因此本次整理后模型加载、WebSocket 全量推理和真机任务需要在模型盘恢复后或新 AGX 接入 checkpoint 后验证。
+
+## 既有模型与接口验证
+
+整理前的同一完整 global90 π0.5 模型已在原 AGX 上运行，生产 WebSocket 端到端延迟 P50/P95 为约 420.33/422.48 ms，采用 10 步去噪和 50×7 动作输出。这是既有部署测量。
+
+GPT-6 Astra 在原 Harness 接口的真实 API 验证中，使用两路 global90 录制图像完成 `observe` → `finish`。两次请求、两次工具调用共 15.32 秒，正确识别夹爪持有蓝色方块。该测量对应视觉规划两轮 API 交互。
+
+## 在另一台 AGX 上验收
+
+1. 使用匹配的 JetPack/CUDA 环境运行 `setup.sh`，确认 BF16、Triton 和 runtime 检查通过。
+2. 核对本地硬件配置，将完整 checkpoint 单独放入新设备并执行接入检查。
+3. 生成预热输入、安装 user unit，按需启动服务，确认 `/healthz` 就绪。
+4. 使用真实录制观察执行基准测试，并在需要时执行固定 noise 的参考一致性测试。
+5. 运行 `observe`、`dry-run`，核对双相机顺序、TCP、夹爪状态和预测动作。
+6. 在当前工位执行 HOME 与真机任务验收。Harness 路线需另外填写私有 API 配置并验证规划器链路。
+
+另一台 AGX 的模型加载和真实任务效果由以上现场验收确认。

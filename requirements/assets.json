@@ -1,0 +1,26 @@
+[
+  {
+    "group": "inference",
+    "name": "torch-2.11.0-cp310-cp310-linux_aarch64.whl",
+    "sha256": "46bb8b13f844b2111f6f41abc703d01075a7185e0c587cb002e957ede2b8c8a3",
+    "url": "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/46b/b8b13f844b211/torch-2.11.0-cp310-cp310-linux_aarch64.whl"
+  },
+  {
+    "group": "inference",
+    "name": "triton-3.6.0-cp310-cp310-linux_aarch64.whl",
+    "sha256": "e68f6e7348753f168980f2d717fa28d37b47dad1a8892bb7078cf551fee27a98",
+    "url": "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/e68/f6e7348753f16/triton-3.6.0-cp310-cp310-linux_aarch64.whl"
+  },
+  {
+    "group": "inference",
+    "name": "libcudss-linux-aarch64-0.7.1.4_cuda12-archive.tar.xz",
+    "sha256": "f283c31b6badf4a5277014295705eac8e6e28f27de30d746719ea1cef7a750b8",
+    "url": "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-aarch64/libcudss-linux-aarch64-0.7.1.4_cuda12-archive.tar.xz"
+  },
+  {
+    "group": "harness",
+    "name": "rpent-ed6b9223fa8e9854964d067c94d7df3ded90e75a.tar.gz",
+    "sha256": "d06036631c46100091a23a8192bdf4e1ddadf6ddf9f37d764f48dc0596406eca",
+    "url": "https://codeload.github.com/RLinf/RPent/tar.gz/ed6b9223fa8e9854964d067c94d7df3ded90e75a"
+  }
+]
