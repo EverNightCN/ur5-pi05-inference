@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import threading
+import logging
 import time
 from typing import Sequence
 
@@ -35,6 +36,8 @@ REG_SPEED = 0x0104
 REG_ENABLE = 0x0106
 REG_GRIP_STATE = 0x0201
 REG_POSITION = 0x0202
+
+LOG = logging.getLogger(__name__)
 
 POSITION_MIN = 0
 POSITION_MAX = 1000
@@ -150,6 +153,11 @@ class Gripper:
         self.last_error: str | None = None
         self.last_read_at = 0.0
         self._next_read = 0.0
+        self._response_timeout_s = 0.1
+        self._last_exchange_end = 0.0
+        # Modbus RTU recommends a fixed 1.75 ms inter-frame gap above 19200 baud.
+        self._frame_gap_s = max(3.5 * 11 / self.baud, 0.00175)
+        self.communication_resyncs = 0
 
     # -- 生命周期 --
     def connect(self) -> str:
@@ -253,34 +261,68 @@ class Gripper:
                     self.last_error = str(exc)
             time.sleep(self._period_s)
 
+    def _exchange(self, request: bytes, response_size: int) -> bytes:
+        """Receive one matching, CRC-verified RTU response across partial USB reads."""
+        time.sleep(max(0.0, self._frame_gap_s - (time.monotonic() - self._last_exchange_end)))
+        self._transport.reset_input_buffer()
+        self._transport.write(request)
+        deadline = time.monotonic() + self._response_timeout_s
+        function = request[1]
+        buffer = bytearray()
+        received = bytearray()
+        discarded = 0
+        try:
+            while time.monotonic() < deadline:
+                chunk = self._transport.read(1)
+                if not chunk:
+                    time.sleep(0.001)
+                    continue
+                buffer.extend(chunk)
+                received.extend(chunk)
+                if len(received) > 256:
+                    del received[:-256]
+                while len(buffer) >= 2:
+                    if buffer[0] != self.slave_id or buffer[1] not in (function, function | 0x80):
+                        del buffer[0]
+                        discarded += 1
+                        continue
+                    length = 5 if buffer[1] == function | 0x80 else response_size
+                    if len(buffer) < length:
+                        break
+                    response = bytes(buffer[:length])
+                    if crc16(response[:-2]) != int.from_bytes(response[-2:], 'little'):
+                        del buffer[0]
+                        discarded += 1
+                        continue
+                    if discarded:
+                        self.communication_resyncs += 1
+                        LOG.warning('Modbus RTU resynchronized after %d bytes; rx=%s',
+                                    discarded, received.hex())
+                    if response[1] == function | 0x80:
+                        raise GripperError(f'Modbus 异常响应：0x{response[2]:02X}; frame={response.hex()}')
+                    return response
+            raise GripperError(f'Modbus RTU response timeout/invalid frame; '
+                               f'function=0x{function:02X}, discarded={discarded}, rx={received.hex()}')
+        finally:
+            self._last_exchange_end = time.monotonic()
+
     def _write_register(self, address: int, value: int) -> None:
         frame = build_write(self.slave_id, address, [value])
-        self._transport.reset_input_buffer()
-        self._transport.write(frame)
-        # Modbus 写寄存器后设备会回显请求（8 字节），必须读掉，否则会打乱后续状态读取
-        echo = self._transport.read(len(frame))
-        if len(echo) < len(frame):
-            raise GripperError(f"写寄存器 0x{address:04X} 无响应（收到 {len(echo)} 字节）")
-        if echo[1] & 0x80:
-            raise GripperError(f"写寄存器 0x{address:04X} 异常响应：0x{echo[2]:02X}")
-        if crc16(echo[:-2]) != int.from_bytes(echo[-2:], "little"):
-            raise GripperError(f"写寄存器 0x{address:04X} 回显 CRC 错误：{echo.hex()}")
+        echo = self._exchange(frame, 8)
+        if echo != frame:
+            raise GripperError(f'写寄存器 0x{address:04X} 回显不匹配：'
+                               f'tx={frame.hex()}, rx={echo.hex()}')
 
     def _read_status(self) -> None:
-        frame = build_read(self.slave_id, REG_GRIP_STATE, 2)
-        self._transport.reset_input_buffer()
-        self._transport.write(frame)
-        response = self._transport.read(9)
-        if len(response) < 7:
-            raise GripperError(f"读状态无响应（收到 {len(response)} 字节）")
-        if response[1] & 0x80:
-            raise GripperError(f"Modbus 异常响应：0x{response[2]:02X}")
-        if response[1] != 0x03 or response[2] != 4 or len(response) < 9:
-            raise GripperError(f"读状态响应格式错误：{response.hex()}")
-        if crc16(response[:-2]) != int.from_bytes(response[-2:], "little"):
-            raise GripperError(f"读状态 CRC 错误：{response.hex()}")
-        self.grip_state = int.from_bytes(response[3:5], "big")
-        self.position_raw = int.from_bytes(response[5:7], "big")
+        response = self._exchange(build_read(self.slave_id, REG_GRIP_STATE, 2), 9)
+        if response[2] != 4:
+            raise GripperError(f'读状态响应格式错误：{response.hex()}')
+        state = int.from_bytes(response[3:5], 'big')
+        position = int.from_bytes(response[5:7], 'big')
+        if state not in GRIP_STATE_NAMES or not POSITION_MIN <= position <= POSITION_MAX:
+            raise GripperError(f'读状态寄存器值错误：{response.hex()}')
+        self.grip_state = state
+        self.position_raw = position
         self._motion_status = (self._last_delivered, self.grip_state)
         self.last_read_at = time.monotonic()
         self.healthy = True
