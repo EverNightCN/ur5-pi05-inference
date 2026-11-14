@@ -163,6 +163,8 @@ bash run_harness.sh run
 
 配置示例采用 `openai-responses:gpt-6-astra` 和 `low` 推理强度。模型、API 地址和推理强度均由私有配置或 CLI 参数设置。`check` 检查依赖与配置读取，实际 API 和硬件链路由 `dry-run` 验证。
 
+参考初态探索使用 `bash run_harness.sh explore`，成功后经人工验收整理并发布记忆。通过 `freeze` 固定版本，再用 `evaluate` 与 `evaluate --zero-shot` 在新布置进行对照。完整流程见 [探索与冻结评测](docs/exploration.md)。
+
 工具、记忆、代理配置与结果格式详见 [HarnessVLA 使用说明](docs/harness.md)。
 
 ## 6. 测试与性能复现

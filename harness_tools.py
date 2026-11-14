@@ -28,8 +28,29 @@ class UR5HarnessToolkit(Toolkit):
         self.cfg = cfg
         self.output_dir = Path(output_dir)
         self.capture_lock = threading.Lock()
+        self.call_lock = threading.Lock()
+        self.call_sequence = 0
         self.add_tools(iter_tools(self))
         self.observe()
+
+    def execute_tool(self, name, input_dict):
+        """Retain executed calls independently of planner-written notes and recipes."""
+        with self.call_lock:
+            self.call_sequence += 1
+            call_id = self.call_sequence
+        started = time.monotonic()
+        result = super().execute_tool(name, input_dict)
+        result.data['harness_call_id'] = call_id
+        record = dict(call_id=call_id, tool=name, arguments=input_dict,
+                      elapsed_s=time.monotonic() - started, error=result.data.get('error'),
+                      result=result.data)
+        # Preserve rejected non-finite arguments as text in an otherwise standard JSON journal.
+        record = json.loads(json.dumps(record, default=str), parse_constant=str)
+        with self.call_lock:
+            with (self.output_dir / 'tool-calls.jsonl').open('a') as stream:
+                stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False, default=str) + '\n')
+                stream.flush()
+        return result
 
     def capture(self, *, command=None, result=None, elapsed_s=None):
         with self.capture_lock:

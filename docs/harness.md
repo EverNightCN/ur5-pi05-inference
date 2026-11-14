@@ -27,6 +27,12 @@ bash run_harness.sh run
 
 `run` 会执行配置中的 HOME 并进入真机工具循环。Ctrl+C 取消当前动作、清理工具线程并关闭硬件连接。运行时间和模型请求轮数默认不限，通过 `--planner-timeout` 与 `--max-turns` 调整。
 
+## 探索、成功记忆与评测
+
+`run` 使用空记忆进行 zero-shot 在线执行。`explore` 提供人工复位、多轮尝试、人工成功验收及成功策略发布。`evaluate` 读取冻结快照，`evaluate --zero-shot` 使用相同固定配置和独立空记忆。操作与验收规则见 [探索与冻结评测](exploration.md)。
+
+新状态目录、模型、控制预算和任务配置都写入每轮记录。规划器可将工作笔记写入本轮 `notes/`，记忆发布由人工验收后的工作流执行。
+
 ## 动作工具
 
 | 工具 | 功能 |
@@ -41,9 +47,9 @@ bash run_harness.sh run
 
 位姿调整沿用共享轨迹执行器，保持当前夹爪命令。规划器使用 `pi05_act` 时，默认沿用完整双物体训练指令。单物体子指令需要根据实际模型能力评估。
 
-默认记忆位于 `.runtime/memory/ur5`，可通过 `--memory-dir` 或 `HARNESSVLA_MEMORY_DIR` 指定现有记忆目录。运行记录位于 `.runtime/runs/<时间戳>`，包含配置、图像、状态、动作日志、transcript 和 `result.json`。
+默认记忆位于 `.runtime/memory/ur5`，可通过 `--memory-dir` 或 `HARNESSVLA_MEMORY_DIR` 指定现有记忆目录。直接运行记录位于 `.runtime/runs/<时间戳>`，探索与评测位于相应子目录，包含初态/终态证据、工具调用日志、配置、transcript 和结果。通过 `HARNESSVLA_STATE_DIR` 设置状态根目录。
 
-`finish` 保存规划器的观察结论，`physical_success` 初始为 null，实际任务结果由真机实验验收。
+`finish` 保存规划器的观察结论。`physical_success` 初始为 null，通过操作者 `review` 验收更新。
 
 ## 使用 Mac v2rayN 代理
 
@@ -65,3 +71,13 @@ NO_PROXY=localhost,127.0.0.1,::1
 ```
 
 这条链路依赖 Mac、v2rayN 和 SSH 会话在线。使用其他本地或局域网代理时，填写实际代理地址。机器人 RTDE/URScript 使用 TCP 直连，串口和相机通过本地设备访问。
+
+## 适配现有部署路径
+
+已有 AGX 部署可通过 checkout 根目录的 `harness.local.env` 指定以下 shell 环境变量。文件为本机配置，使用 `export NAME=value`，由入口读取。API 凭据继续保存在私有 dotenv 文件。
+
+- `HARNESSVLA_PYTHON` 指定独立规划环境解释器。
+- `RPENT_ROOT`、`OPENPI_CLIENT_ROOT` 指定源码目录。
+- `UR5_REPO`、`UR5_CONFIG` 指定硬件支持代码和配置。
+- `HARNESSVLA_STATE_DIR` 指定新运行记录及记忆目录。
+- `PI05_CHECKPOINT` 指定当前模型选择路径。

@@ -29,3 +29,4 @@ config/*.env
 __pycache__/
 *.py[cod]
 .DS_Store
+*.local.env
