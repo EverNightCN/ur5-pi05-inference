@@ -23,7 +23,8 @@ def main():
         '/bin/bash', ROOT / 'run.sh', ROOT / 'serve.py',
         '--checkpoint', ROOT / '.runtime/checkpoint-current',
         '--warmup-sample', ROOT / '.runtime/warmup.npz',
-        '--attention', 'sdpa', '--compile-mode', 'default', '--compile-all', '--port', '8000'])
+        '--attention', 'sdpa', '--compile-mode', 'default', '--compile-all', '--port', '8000',
+        '--warmup-runs', '3'])
     unit = '\n'.join([
         '[Unit]', 'Description=UR5 complete pi0.5 inference on AGX Orin', '',
         '[Service]', 'Type=simple', f'WorkingDirectory={str(ROOT).replace("%", "%%")}',

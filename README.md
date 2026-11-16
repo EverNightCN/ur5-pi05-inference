@@ -1,11 +1,11 @@
 # UR5 π0.5 Inference on Jetson AGX Orin
 
-面向 UR5、双 RGB 相机和 RS485 夹爪的完整 π0.5 真机推理部署，包含直接策略执行与 HarnessVLA 上层视觉规划两个入口。
+面向 UR5、双 RGB 相机和 RS485 夹爪的完整 π0.5 真机推理部署，包含直接策略执行、HarnessVLA 上层视觉规划，以及供 VeraPlan 接入的 Python 接口。
 
 ```text
 双相机 + RTDE 状态 → 本机 π0.5 WebSocket 服务 → 30 Hz 轨迹执行 → UR5 / 夹爪
                           ↑
-             HarnessVLA / RPent 视觉规划与工具调用
+             VeraPlan / HarnessVLA 视觉规划与工具调用
 ```
 
 ## 功能
@@ -34,6 +34,8 @@
 ## 仓库结构
 
 ```text
+planner_bridge.py        规划器观测、动作段、暂停和停止接口
+examples/                VeraPlan 最小闭环与图像/语言推理示例
 run_robot.sh             直接 π0.5 真机入口
 run_harness.sh           HarnessVLA 入口
 start_inference.sh       按需管理模型服务
@@ -145,6 +147,18 @@ bash start_inference.sh stop
 ```
 
 每轮直接推理日志位于 `.runtime/logs/`，模型服务日志为 `.runtime/logs/service.log`。
+
+## VeraPlan 对接
+
+使用 `planner_bridge.open_session(args)` 保持一个硬件连接所有者，通过 `observe()` 获取双相机和机器人反馈，通过 `act(instruction, seconds)` 调用 π0.5，并用 `pause()`、`stop()` 与 `wait()` 管理执行。接口复用现有控制循环，规划器根据动作后的图像和反馈判断任务结果。
+
+```bash
+bash run.sh examples/veraplan_minimal.py --mode observe
+bash run.sh examples/veraplan_minimal.py --mode dry-run --duration 4 \
+  --prompt "完整的模型训练任务指令"
+```
+
+输入输出字段、启动命令、真机示例、暂停与恢复方法，以及可调用能力见 [VeraPlan 对接说明](docs/veraplan.md)。
 
 ## 5. HarnessVLA 推理
 

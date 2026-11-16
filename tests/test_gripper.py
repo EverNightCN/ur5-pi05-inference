@@ -117,12 +117,43 @@ class RtuResponseTest(unittest.TestCase):
         self.assertEqual(gripper.position_raw,250)
         self.assertEqual(len(transport.written),1)
 
+    def test_corrupted_transaction_retries_and_accepts_only_a_valid_frame(self):
+        class RetryTransport(FakeTransport):
+            def write(self, frame):
+                self.written.append(frame)
+                if len(self.written) == 1:
+                    self.responses.append(bytes.fromhex('5fa020414040207ab5d3'))
+                else:
+                    self.responses.append(status_response(position=1000))
+        transport = RetryTransport()
+        gripper = Gripper(transport=transport)
+        gripper._response_timeout_s = .005
+        with self.assertLogs('ur5_teleop.gripper', level='WARNING') as logs:
+            gripper._read_status()
+        self.assertEqual(len(transport.written), 2)
+        self.assertEqual(gripper.communication_retries, 1)
+        self.assertEqual(gripper.position_raw, 1000)
+        self.assertTrue(gripper.healthy)
+        self.assertIn('retry 1/1', logs.output[0])
+
+    def test_repeated_invalid_transactions_fail_without_publishing_a_position(self):
+        transport = FakeTransport()
+        gripper = Gripper(transport=transport)
+        gripper._response_timeout_s = .005
+        with self.assertLogs('ur5_teleop.gripper', level='WARNING'):
+            with self.assertRaisesRegex(GripperError, 'timeout/invalid frame'):
+                gripper._read_status()
+        self.assertEqual(len(transport.written), 2)
+        self.assertIsNone(gripper.position_raw)
+        self.assertFalse(gripper.healthy)
+
     def test_valid_five_byte_exception_is_reported_with_raw_frame(self):
         payload = bytes.fromhex('018302')
         frame = payload + crc16(payload).to_bytes(2,'little')
         gripper = Gripper(transport=FakeTransport([frame]))
         with self.assertRaisesRegex(GripperError,'0x02; frame=018302'):
             gripper._read_status()
+        self.assertEqual(len(gripper._transport.written), 1)
 
     def test_invalid_exception_crc_is_not_reported_as_a_device_exception(self):
         gripper = Gripper(transport=FakeTransport([bytes.fromhex('0183ff0000')]))

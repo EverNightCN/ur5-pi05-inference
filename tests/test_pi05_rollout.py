@@ -311,6 +311,25 @@ class RolloutTest(unittest.TestCase):
             self.assertIn('movej([-3.14159265', send.call_args.args[1])
         self.assertEqual(sum(call.args == ('stop',) for call in dashboard.command.call_args_list), 2)
 
+    def test_home_opens_existing_gripper_before_dispatching_movej(self):
+        stop = threading.Event()
+        stop.set()
+        dashboard = MagicMock()
+        dashboard.command.return_value = 'NORMAL'
+        calls = []
+        gripper = MagicMock()
+        gripper.set_position.side_effect = lambda position: calls.append(('gripper', position))
+        with patch('ur5_teleop.ur_client.DashboardClient', return_value=dashboard), \
+                patch('ur5_teleop.ur_client.open_script_channel'), \
+                patch('ur5_teleop.ur_client.send_program', side_effect=lambda *args: calls.append(('movej',))):
+            with self.assertRaises(InterruptedError):
+                move_home(SimpleNamespace(robot_ip='127.0.0.1'),
+                          {'home': {'joints_deg': HOME_JOINTS_DEG}}, RolloutConfig(), stop,
+                          backend=MagicMock(), gripper=gripper)
+        self.assertEqual(calls, [('gripper', 1000), ('movej',)])
+        gripper.connect.assert_not_called()
+        gripper.close.assert_not_called()
+
     def test_home_reuses_rollout_connection_without_releasing_registers(self):
         stop = threading.Event()
         stop.set()

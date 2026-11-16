@@ -50,6 +50,10 @@ class GripperError(RuntimeError):
     """夹爪通信/协议错误。"""
 
 
+class ModbusResponseError(GripperError):
+    """No complete, CRC-valid response arrived for the transaction."""
+
+
 def crc16(data: bytes) -> int:
     """Modbus RTU CRC16（多项式 0xA001，初值 0xFFFF）。"""
     crc = 0xFFFF
@@ -100,7 +104,7 @@ class SerialTransport:
         import serial  # 延迟导入：单测/无夹爪环境不需要 pyserial
 
         self._serial = serial.Serial(port, baudrate=baud, bytesize=8, parity="N",
-                                     stopbits=1, timeout=timeout_s)
+                                     stopbits=1, timeout=timeout_s, exclusive=True)
 
     def write(self, data: bytes) -> None:
         self._serial.write(data)
@@ -158,6 +162,7 @@ class Gripper:
         # Modbus RTU recommends a fixed 1.75 ms inter-frame gap above 19200 baud.
         self._frame_gap_s = max(3.5 * 11 / self.baud, 0.00175)
         self.communication_resyncs = 0
+        self.communication_retries = 0
 
     # -- 生命周期 --
     def connect(self) -> str:
@@ -262,6 +267,16 @@ class Gripper:
             time.sleep(self._period_s)
 
     def _exchange(self, request: bytes, response_size: int) -> bytes:
+        # Register reads and absolute register writes are idempotent. Retry only
+        # a missing/corrupt response, preserving valid device exceptions.
+        try:
+            return self._exchange_once(request, response_size)
+        except ModbusResponseError as error:
+            self.communication_retries += 1
+            LOG.warning("Modbus RTU retry 1/1 after invalid response: %s", error)
+            return self._exchange_once(request, response_size)
+
+    def _exchange_once(self, request: bytes, response_size: int) -> bytes:
         """Receive one matching, CRC-verified RTU response across partial USB reads."""
         time.sleep(max(0.0, self._frame_gap_s - (time.monotonic() - self._last_exchange_end)))
         self._transport.reset_input_buffer()
@@ -301,7 +316,7 @@ class Gripper:
                     if response[1] == function | 0x80:
                         raise GripperError(f'Modbus 异常响应：0x{response[2]:02X}; frame={response.hex()}')
                     return response
-            raise GripperError(f'Modbus RTU response timeout/invalid frame; '
+            raise ModbusResponseError(f'Modbus RTU response timeout/invalid frame; '
                                f'function=0x{function:02X}, discarded={discarded}, rx={received.hex()}')
         finally:
             self._last_exchange_end = time.monotonic()

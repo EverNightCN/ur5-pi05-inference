@@ -127,11 +127,23 @@ class UR5Robot:
         return state
 
     def get_observation(self):
-        state = self.get_state()
-        pairs = [camera.snapshot(self.cfg.camera_max_age) for camera in self.cameras]
-        stamps = [stamp for _, stamp in pairs] + [state.timestamp]
-        if max(stamps) - min(stamps) > self.cfg.camera_max_skew:
-            raise RuntimeError("Camera/robot observation timestamps are too far apart")
+        deadline = time.monotonic() + self.cfg.camera_max_age
+        while True:
+            pairs = [camera.snapshot(self.cfg.camera_max_age) for camera in self.cameras]
+            state = self.get_state()
+            stamps = [stamp for _, stamp in pairs] + [state.timestamp]
+            skew = max(stamps) - min(stamps)
+            if skew <= self.cfg.camera_max_skew:
+                break
+            now = time.monotonic()
+            if now >= deadline:
+                ages = [round((now - stamp) * 1000, 1) for stamp in stamps]
+                raise RuntimeError(
+                    f"Camera/robot observation timestamps are too far apart: "
+                    f"skew={skew * 1000:.1f}ms, "
+                    f"limit={self.cfg.camera_max_skew * 1000:.1f}ms, "
+                    f"ages_ms(global,wrist,robot)={ages}")
+            time.sleep(0.005)
         if self.gripper is None:
             raise RuntimeError("Policy observations require a measured gripper position")
         grip = self.gripper.position_raw
@@ -173,7 +185,7 @@ class UR5Robot:
                     self.gripper.stop_motion()
 
 
-def move_home(args, hardware, cfg, stop, *, backend=None):
+def move_home(args, hardware, cfg, stop, *, backend=None, gripper=None):
     from ur5_teleop.home import build_movej_program
     from ur5_teleop.ur_client import DashboardClient, RTDEBackend, open_script_channel, send_program
     ip = args.robot_ip or hardware['robot']['ip']
@@ -192,6 +204,9 @@ def move_home(args, hardware, cfg, stop, *, backend=None):
         try:
             dashboard.command('stop')
             with open_script_channel(ip, 30001) as channel:
+                if gripper is not None:
+                    gripper.set_position(1000)
+                    LOG.info("Opening gripper to 1000 concurrently with HOME")
                 send_program(channel, build_movej_program(target, a=0.3, v=0.2))
                 stop.wait(0.8)
             deadline = time.monotonic() + 60
@@ -230,7 +245,7 @@ def prepare_execution(robot, args, hardware, cfg, stop):
     if not robot.executing:
         return
     if args.home_at_start:
-        move_home(args, hardware, cfg, stop, backend=robot.backend)
+        move_home(args, hardware, cfg, stop, backend=robot.backend, gripper=robot.gripper)
     if not at_home(robot.backend.read_state().joints, hardware['home']['joints_deg'], cfg.home_tolerance_deg):
         raise RuntimeError('Robot is outside HOME tolerance; use --mode home or --home-at-start')
     install_servo_program(args, hardware, stop)
@@ -324,7 +339,8 @@ def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--mode', choices=['observe', 'dry-run', 'record', 'home'], default='dry-run')
     ap.add_argument('--ur5-repo', default=os.environ.get('UR5_REPO', str(Path(__file__).resolve().parent)))
-    ap.add_argument('--config', help='UR5 TOML config, default <ur5-repo>/config/ur5.local.toml')
+    ap.add_argument('--config', default=os.environ.get('UR5_CONFIG'),
+                    help='UR5 TOML config, default UR5_CONFIG or <ur5-repo>/config/ur5.local.toml')
     ap.add_argument('--robot-ip')
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=8000)
